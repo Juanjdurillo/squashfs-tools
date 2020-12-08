@@ -926,9 +926,13 @@ int open_wait(char *pathname, int flags, mode_t mode)
 	return open(pathname, flags, mode);
 }
 
-
-void close_wake(int fd)
+void close_and_repair_permissions_wake(int fd, mode_t mode)
 {
+	
+	int permissions_changed = fchmod(fd,mode);
+	if (permissions_changed < 0)
+		EXIT_UNSQUASH("file permission error: unable to set correct file permissions\n");
+		
 	close(fd);
 
 	if (!open_unlimited) {
@@ -938,7 +942,6 @@ void close_wake(int fd)
 		pthread_mutex_unlock(&open_mutex);
 	}
 }
-
 
 void queue_file(char *pathname, int file_fd, struct inode *inode)
 {
@@ -987,7 +990,7 @@ int write_file(struct inode *inode, char *pathname)
 	TRACE("write_file: regular file, blocks %d\n", inode->blocks);
 
 	file_fd = open_wait(pathname, O_CREAT | O_WRONLY |
-		(force ? O_TRUNC : 0), (mode_t) inode->mode & 0777);
+		(force ? O_TRUNC : 0), (mode_t) 0764);
 	if(file_fd == -1) {
 		EXIT_UNSQUASH_IGNORE("write_file: failed to create file %s, because %s\n",
 			pathname, strerror(errno));
@@ -2144,7 +2147,7 @@ void *writer(void *arg)
 			}
 		}
 
-		close_wake(file_fd);
+		close_and_repair_permissions_wake(file_fd, (mode_t) file->mode & 0777);
 		if(failed == FALSE) {
 			res = set_attributes(file->pathname, file->mode, file->uid,
 				file->gid, file->time, file->xattr, force);
@@ -2349,7 +2352,7 @@ void initialise_threads(int fragment_buffer_size, int data_buffer_size)
 	} else
 		max_files = -1;
 
-	/* set amount of available files for use by open_wait and close_wake */
+	/* set amount of available files for use by open_wait and close_and_repair_permissions_wake */
 	open_init(max_files);
 
 	/*
