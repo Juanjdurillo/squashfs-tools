@@ -986,11 +986,34 @@ int write_file(struct inode *inode, char *pathname)
 	unsigned int *block_list;
 	int file_end = inode->data / block_size;
 	long long start = inode->start;
+	struct flock lock;
 
 	TRACE("write_file: regular file, blocks %d\n", inode->blocks);
 
+	lock.l_type 	= F_WRLCK;
+	lock.l_start 	= 0;
+	lock.l_whence 	= SEEK_SET;
+	lock.l_len 	= 0;
+
+
 	file_fd = open_wait(pathname, O_CREAT | O_WRONLY |
-		(force ? O_TRUNC : 0), (mode_t) 0764);
+		(force ? O_TRUNC : 0), (mode_t) 0744);
+
+	/* we broke the atomicity of some operations (particularly creating a read only
+	  file for writting) into 1) creating a file with 0764 permision, writting on it, 
+	  and 2) changing its permissions afterwards to deal with some NFS issues. 
+	 
+	  For the sake of added security, the file is inmediately blocked to be written by other
+	  processes meanwhile. This lock is released by close (see close_and_repair_permissions_wake)
+	  after the permissions of the file have been changed. Opened descriptor in no NFS-based files
+	  are still governed by the 0764 mode though. In NFS based systems, the change of 
+	  permissions affects already opened descriptors. Therefore, the locking is a security
+	  step for NFS based systems
+	 */
+        if (fcntl(file_fd,F_SETLK,&lock)<0) {
+		EXIT_UNSQUASH_IGNORE("write_file: failed to lock the file for writing\n");
+	}
+
 	if(file_fd == -1) {
 		EXIT_UNSQUASH_IGNORE("write_file: failed to create file %s, because %s\n",
 			pathname, strerror(errno));
